@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { useLoaderData, useNavigate, useSubmit } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -13,22 +13,73 @@ import {
   Box,
   Badge,
   Icon,
-  Collapsible,
   Divider,
+  Grid,
+  Checkbox,
+  Layout,
+  Banner,
+  Select,
 } from "@shopify/polaris";
 import {
-  CheckCircleIcon,
-  MenuHorizontalIcon,
-  ChevronUpIcon,
-  CircleUpIcon
+  EditIcon,
+  AppsIcon,
+  ExternalIcon,
+  MobileIcon,
+  DesktopIcon,
+  RefreshIcon,
+  ArrowLeftIcon
 } from "@shopify/polaris-icons";
+import "../styles/customize.css";
+
+// --- PRESETS ---
+const PRESETS = [
+  {
+    id: 'clean',
+    title: 'Clean & Simple',
+    description: 'Professional and trustworthy.',
+    config: {
+      display: { backgroundColor: "#ffffff", textColor: "#202223", rounded: "rounded", glassy: false },
+      button: { color: "#005bd3", textColor: "#ffffff" },
+      settings: { layout: 'docked', position: 'bottom' }
+    }
+  },
+  {
+    id: 'bold',
+    title: 'Bold Dark',
+    description: 'High contrast for maximum visibility.',
+    config: {
+      display: { backgroundColor: "#202223", textColor: "#ffffff", rounded: "none", glassy: false },
+      button: { color: "#ffffff", textColor: "#202223" },
+      settings: { layout: 'docked', position: 'bottom' }
+    }
+  },
+  {
+    id: 'glassy',
+    title: 'Modern Glass',
+    description: 'Trendy frosted glass effect.',
+    config: {
+      display: { backgroundColor: "#202223", textColor: "#ffffff", rounded: "pill", glassy: true },
+      button: { color: "#005bd3", textColor: "#ffffff" },
+      settings: { layout: 'floating', position: 'bottom' }
+    }
+  },
+  {
+    id: 'minimal',
+    title: 'Minimalist',
+    description: 'Less is more. Focus on the button.',
+    config: {
+      display: { backgroundColor: "#f1f2f4", textColor: "#202223", rounded: "rounded", glassy: false },
+      button: { color: "#202223", textColor: "#ffffff" },
+      product: { showImage: false, showTitle: true, showPrice: false },
+      settings: { layout: 'floating', position: 'top' }
+    }
+  }
+];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
-  // 1. Fetch Metafields for Config and Onboarding
-  // We separate this from the themes query to prevent the whole page from crashing
-  // if the user hasn't granted read_themes scope yet.
+  // 1. Fetch Metafields
   const shopQuery = await admin.graphql(
     `query {
       shop {
@@ -42,7 +93,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shopResponse = await shopQuery.json();
   const shopData = shopResponse.data.shop;
 
-  // 2. Try to fetch Theme Settings (requires read_themes scope)
+  // 2. Fetch Theme Settings (for embed check)
   let themeData = null;
   try {
     const themesQuery = await admin.graphql(
@@ -70,8 +121,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const themesResponse = await themesQuery.json();
     themeData = themesResponse.data?.themes?.edges?.[0]?.node;
   } catch (error) {
-    console.warn("Could not fetch theme settings. Ensure 'read_themes' scope is granted.", error);
-    // Continue without theme data
+    console.warn("Could not fetch theme settings.", error);
   }
 
   // Parse Config
@@ -80,9 +130,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Parse Onboarding
   const storedOnboarding = shopData.onboarding?.value ? JSON.parse(shopData.onboarding.value) : null;
-  let completedSteps = storedOnboarding?.completedSteps ?? [];
+  // We use a simple "setupComplete" flag or check if step 3 is done
+  const setupComplete = storedOnboarding?.setupComplete ?? false;
+  const currentStep = storedOnboarding?.currentStep ?? 1;
 
-  // 3. Check App Embed Status in Theme
+  // 3. Check App Embed Status
   let isEmbedActive = false;
   if (themeData) {
     const settingsFile = themeData.files?.edges?.[0]?.node?.body?.content;
@@ -90,8 +142,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       try {
         const settings = JSON.parse(settingsFile);
         const blocks = settings.current?.blocks || {};
-        // Look for any block that is our sticky_bar and is NOT disabled
-        // The type format is: shopify://apps/{app_handle}/blocks/{extension_handle}/{uuid}
         isEmbedActive = Object.values(blocks).some((block: any) => 
           block.type.includes("/blocks/sticky_bar/") && block.disabled !== true
         );
@@ -101,17 +151,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  // Auto-complete step 1 if embed is active
-  if (isEmbedActive && !completedSteps.includes(1)) {
-    completedSteps = [...completedSteps, 1];
-  }
-
   return { 
     shop: session.shop,
-    initialCompletedSteps: completedSteps,
-    initialAppEnabled: isAppEnabled,
+    setupComplete,
+    currentStep,
+    isAppEnabled,
     isEmbedActive,
-    shopId: shopData.id
+    shopId: shopData.id,
+    storedConfig // Pass this to pre-fill config form
   };
 };
 
@@ -121,48 +168,70 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const actionType = formData.get("actionType");
   const shopId = formData.get("shopId");
 
-  if (actionType === "updateSteps") {
-    const steps = formData.get("completedSteps");
-    if (steps) {
-      await admin.graphql(
-        `mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) {
-            userErrors { field message }
-          }
-        }`,
-        {
-          variables: {
-            metafields: [
-              {
-                namespace: "stickyadd",
-                key: "onboarding",
-                type: "json",
-                value: JSON.stringify({ completedSteps: JSON.parse(steps.toString()) }),
-                ownerId: shopId
-              }
-            ]
-          }
-        }
-      );
+  if (actionType === "saveStep") {
+    const step = Number(formData.get("step"));
+    const setupComplete = formData.get("setupComplete") === "true";
+    const reset = formData.get("reset") === "true";
+    const configUpdate = formData.get("configUpdate");
+    
+    // 1. Update Onboarding State
+    let onboardingValue = { currentStep: step + 1, setupComplete };
+    
+    if (reset) {
+        onboardingValue = { currentStep: 1, setupComplete: false };
     }
-  } else if (actionType === "toggleApp") {
-    const enabled = formData.get("enabled") === "true";
+
+    const onboardingMetafield = {
+      namespace: "stickyadd",
+      key: "onboarding",
+      type: "json",
+      value: JSON.stringify(onboardingValue),
+      ownerId: shopId
+    };
+
+    // 2. Update Config if provided
+    const metafields = [onboardingMetafield];
     
-    const queryResponse = await admin.graphql(
-      `query {
-        shop {
-          metafield(namespace: "stickyadd", key: "config") {
-            value
+    if (configUpdate) {
+      // We need to fetch existing config first to merge, or we trust the frontend to send partials
+      // Ideally we fetch, but for speed we'll assume the frontend sends what it wants to merge or we merge blindly?
+      // Better to fetch current config here to be safe, but we can also just use the value passed if we are careful.
+      // Let's fetch current config to do a deep merge properly.
+      const queryResponse = await admin.graphql(
+        `query {
+          shop {
+            metafield(namespace: "stickyadd", key: "config") { value }
+          }
+        }`
+      );
+      const queryJson = await queryResponse.json();
+      const existingConfig = queryJson.data.shop.metafield?.value 
+        ? JSON.parse(queryJson.data.shop.metafield.value) 
+        : {};
+      
+      const updates = JSON.parse(configUpdate.toString());
+      
+      // Deep merge helper (simplified)
+      const merge = (target: any, source: any) => {
+        for (const key in source) {
+          if (source[key] instanceof Object && key in target) {
+            Object.assign(source[key], merge(target[key], source[key]));
           }
         }
-      }`
-    );
-    const queryJson = await queryResponse.json();
-    const existingConfig = queryJson.data.shop.metafield?.value 
-      ? JSON.parse(queryJson.data.shop.metafield.value) 
-      : {};
-    
-    const newConfig = { ...existingConfig, enabled };
+        Object.assign(target || {}, source);
+        return target;
+      };
+
+      const newConfig = merge(existingConfig, updates);
+
+      metafields.push({
+        namespace: "stickyadd",
+        key: "config",
+        type: "json",
+        value: JSON.stringify(newConfig),
+        ownerId: shopId
+      });
+    }
 
     await admin.graphql(
       `mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -170,19 +239,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           userErrors { field message }
         }
       }`,
-      {
-        variables: {
-          metafields: [
-            {
-              namespace: "stickyadd",
-              key: "config",
-              type: "json",
-              value: JSON.stringify(newConfig),
-              ownerId: shopId
-            }
-          ]
-        }
-      }
+      { variables: { metafields } }
     );
   }
 
@@ -190,326 +247,434 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Index() {
-  const { shop, initialCompletedSteps, initialAppEnabled, isEmbedActive, shopId } = useLoaderData<typeof loader>();
+  const { shop, setupComplete, currentStep, isAppEnabled, isEmbedActive, shopId, storedConfig } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const submit = useSubmit();
 
-  // State for checklist progress
-  const [completedSteps, setCompletedSteps] = useState<number[]>(initialCompletedSteps);
-  const [expandedStep, setExpandedStep] = useState<number | null>(
-    initialCompletedSteps.includes(1) ? (initialCompletedSteps.includes(2) ? (initialCompletedSteps.includes(3) ? null : 3) : 2) : 1
-  ); 
-  const [isAppEnabled, setIsAppEnabled] = useState(initialAppEnabled);
+  // Local state for the stepper
+  const [step, setStep] = useState(currentStep);
+  const [loading, setLoading] = useState(false);
 
-  // Sync state if loader data changes (e.g. revalidation)
-  useEffect(() => {
-    setCompletedSteps(initialCompletedSteps);
-  }, [initialCompletedSteps]);
+  // Config State for Step 3
+  const [configOptions, setConfigOptions] = useState<any>({
+    settings: storedConfig?.settings || { position: "bottom", layout: "docked" },
+    product: storedConfig?.product || { showImage: true, showTitle: true, showPrice: true },
+    controls: storedConfig?.controls || { showVariantSelector: true, showQuantitySelector: true },
+    display: storedConfig?.display || { backgroundColor: "#ffffff", textColor: "#202223", rounded: "rounded", glassy: false },
+    button: storedConfig?.button || { color: "#005bd3", textColor: "#ffffff", text: "Add to cart" },
+    announcement: storedConfig?.announcement || { enabled: false, text: "", color: "", backgroundColor: "" }
+  });
 
-  useEffect(() => {
-    setIsAppEnabled(initialAppEnabled);
-  }, [initialAppEnabled]);
-
-  const toggleStepCompletion = (stepIndex: number) => {
-    setCompletedSteps((prev) => {
-      const isCompleted = prev.includes(stepIndex);
-      const newSteps = isCompleted
-        ? prev.filter((i) => i !== stepIndex)
-        : [...prev, stepIndex];
-      
-      // Auto-expand next step if completing current one
-      if (!isCompleted && stepIndex < 3) {
-        setExpandedStep(stepIndex + 1);
-      }
-      
-      // Submit to backend
-      const formData = new FormData();
-      formData.append("actionType", "updateSteps");
-      formData.append("completedSteps", JSON.stringify(newSteps));
-      formData.append("shopId", shopId);
-      submit(formData, { method: "post" });
-
-      return newSteps;
-    });
-  };
-
-  const handleToggleApp = () => {
-    const newState = !isAppEnabled;
-    setIsAppEnabled(newState);
-    
+  const handleNextStep = (configUpdate: any = null, finish = false) => {
+    setLoading(true);
     const formData = new FormData();
-    formData.append("actionType", "toggleApp");
-    formData.append("enabled", String(newState));
+    formData.append("actionType", "saveStep");
+    formData.append("step", String(step));
     formData.append("shopId", shopId);
+    
+    if (finish) {
+      formData.append("setupComplete", "true");
+    } else if (configUpdate?.reset) {
+        formData.append("reset", "true");
+    }
+
+    if (configUpdate && !configUpdate.reset) {
+      formData.append("configUpdate", JSON.stringify(configUpdate));
+    }
+
     submit(formData, { method: "post" });
+    
+    // Optimistic UI update
+    if (configUpdate?.reset) {
+        setStep(1);
+        setLoading(false);
+    } else if (!finish) {
+      setStep(step + 1);
+      setLoading(false);
+    }
   };
 
-  const handleStepClick = (stepIndex: number) => {
-    setExpandedStep(expandedStep === stepIndex ? null : stepIndex);
+  const handleBackStep = () => {
+      if (step > 1) {
+          setStep(step - 1);
+          // Optional: Sync back step to server if we want strict persistence on back navigation too,
+          // but for now local state is enough as forward navigation saves progress.
+      }
   };
 
   const openThemeEditor = () => {
     window.open(`https://${shop}/admin/themes/current/editor?context=apps`, '_blank');
   };
 
-  const progress = (completedSteps.length / 3) * 100;
+  // --- RENDER HELPERS ---
+
+  // STEP 1: WELCOME & ACTIVATE
+  const renderStep1 = () => (
+    <BlockStack gap="500">
+      <BlockStack gap="200">
+        <Text variant="headingLg" as="h2">Welcome to Sticky Add to Cart!</Text>
+        <Text tone="subdued" as="p">Let's get you set up in less than a minute.</Text>
+      </BlockStack>
+      
+      <Card>
+        <BlockStack gap="400">
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+              <Text variant="headingMd" as="h3">1. Activate App Embed</Text>
+              <Text tone="subdued" as="p">
+                This allows the sticky bar to appear on your store.
+              </Text>
+            </BlockStack>
+            <Icon source={AppsIcon} tone="base" />
+          </InlineStack>
+          
+          <Banner tone={isEmbedActive ? "success" : "warning"}>
+            {isEmbedActive 
+              ? "App embed is active! You are ready to proceed." 
+              : "App embed is not detected. Please enable it in your theme editor."}
+          </Banner>
+
+          <InlineStack gap="300">
+            <Button variant="primary" onClick={openThemeEditor} icon={ExternalIcon}>
+              Open Theme Editor
+            </Button>
+            <Button 
+              disabled={!isEmbedActive} 
+              onClick={() => handleNextStep({ enabled: true })} // Enable app internally too
+            >
+              Next Step
+            </Button>
+            {/* Bypass for testing if detection fails */}
+            {!isEmbedActive && (
+              <Button variant="plain" onClick={() => handleNextStep({ enabled: true })}>
+                I've enabled it, continue
+              </Button>
+            )}
+          </InlineStack>
+        </BlockStack>
+      </Card>
+    </BlockStack>
+  );
+
+  // STEP 2: STYLE SELECTION
+  const renderStep2 = () => (
+    <BlockStack gap="500">
+      <BlockStack gap="200">
+        <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+                <Text variant="headingLg" as="h2">Choose a Style</Text>
+                <Text tone="subdued" as="p">Select a design that fits your brand.</Text>
+            </BlockStack>
+            <Button variant="plain" icon={ArrowLeftIcon} onClick={handleBackStep}>Back</Button>
+        </InlineStack>
+      </BlockStack>
+
+      <Grid>
+        {PRESETS.map((preset) => (
+          <Grid.Cell key={preset.id} columnSpan={{xs: 6, sm: 6, md: 3, lg: 3, xl: 3}}>
+            <div 
+              style={{cursor: 'pointer', height: '100%'}}
+              onClick={() => {
+                // Update local config with preset values but don't save to backend yet
+                setConfigOptions((prev: any) => ({
+                    ...prev,
+                    ...preset.config,
+                    // Ensure we merge deep objects if needed, but presets are usually complete for their sections
+                    display: { ...prev.display, ...preset.config.display },
+                    button: { ...prev.button, ...preset.config.button },
+                    settings: { ...prev.settings, ...preset.config.settings }
+                }));
+                handleNextStep(null, false); // Just move to next step, don't save config yet
+              }}
+            >
+              <Card>
+                <BlockStack gap="300">
+                  {/* Mini Preview Visualization */}
+                  <Box 
+                    background="bg-surface-secondary" 
+                    padding="400" 
+                    borderRadius="200"
+                    minHeight="120px"
+                  >
+                    <div style={{
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      height: '100%',
+                      position: 'relative'
+                    }}>
+                      <div style={{
+                        width: '100%',
+                        padding: '8px',
+                        background: preset.config.display.backgroundColor,
+                        color: preset.config.display.textColor,
+                        borderRadius: preset.config.display.rounded === 'pill' ? '20px' : (preset.config.display.rounded === 'rounded' ? '6px' : '0px'),
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                        display: 'flex',
+                        gap: '8px',
+                        alignItems: 'center'
+                      }}>
+                         <div style={{width: 20, height: 20, background: '#ddd', borderRadius: 4}}></div>
+                         <div style={{flex: 1, height: 6, background: preset.config.display.textColor, opacity: 0.3, borderRadius: 2}}></div>
+                         <div style={{
+                           width: 30, 
+                           height: 20, 
+                           background: preset.config.button.color, 
+                           borderRadius: 4
+                         }}></div>
+                      </div>
+                    </div>
+                  </Box>
+                  <BlockStack gap="100">
+                    <Text variant="headingSm" as="h3">{preset.title}</Text>
+                    <Text variant="bodySm" tone="subdued" as="p">{preset.description}</Text>
+                  </BlockStack>
+                  <Button fullWidth>Select</Button>
+                </BlockStack>
+              </Card>
+            </div>
+          </Grid.Cell>
+        ))}
+      </Grid>
+    </BlockStack>
+  );
+
+  // STEP 3: CUSTOMIZE & PREVIEW
+  const renderStep3 = () => (
+    <BlockStack gap="500">
+      <BlockStack gap="200">
+        <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+                <Text variant="headingLg" as="h2">Customize & Preview</Text>
+                <Text tone="subdued" as="p">Fine-tune the content and position. Watch it update live!</Text>
+            </BlockStack>
+            <Button variant="plain" icon={ArrowLeftIcon} onClick={handleBackStep}>Back</Button>
+        </InlineStack>
+      </BlockStack>
+
+      <Layout>
+        {/* LEFT: CONTROLS */}
+        <Layout.Section variant="oneThird">
+            <Card>
+                <BlockStack gap="500">
+                    <BlockStack gap="400">
+                        <Text variant="headingSm" as="h3">Content</Text>
+                        <Checkbox
+                            label="Show Product Image"
+                            checked={configOptions.product.showImage}
+                            onChange={(val) => setConfigOptions((prev: any) => ({...prev, product: {...prev.product, showImage: val}}))}
+                        />
+                        <Checkbox
+                            label="Show Product Title"
+                            checked={configOptions.product.showTitle}
+                            onChange={(val) => setConfigOptions((prev: any) => ({...prev, product: {...prev.product, showTitle: val}}))}
+                        />
+                        <Checkbox
+                            label="Show Price"
+                            checked={configOptions.product.showPrice}
+                            onChange={(val) => setConfigOptions((prev: any) => ({...prev, product: {...prev.product, showPrice: val}}))}
+                        />
+                    </BlockStack>
+                    
+                    <Divider />
+
+                    <BlockStack gap="400">
+                        <Text variant="headingSm" as="h3">Controls</Text>
+                        <Checkbox
+                            label="Show Variant Selector"
+                            helpText="Allow switching variants"
+                            checked={configOptions.controls.showVariantSelector}
+                            onChange={(val) => setConfigOptions((prev: any) => ({...prev, controls: {...prev.controls, showVariantSelector: val}}))}
+                        />
+                        <Checkbox
+                            label="Show Quantity Selector"
+                            checked={configOptions.controls.showQuantitySelector}
+                            onChange={(val) => setConfigOptions((prev: any) => ({...prev, controls: {...prev.controls, showQuantitySelector: val}}))}
+                        />
+                    </BlockStack>
+
+                    <Divider />
+
+                     <BlockStack gap="400">
+                        <Text variant="headingSm" as="h3">Position</Text>
+                         <Select
+                            label="Position"
+                            labelHidden
+                            options={[
+                                {label: 'Bottom of screen', value: 'bottom'},
+                                {label: 'Top of screen', value: 'top'},
+                            ]}
+                            value={configOptions.settings.position}
+                            onChange={(val) => setConfigOptions((prev: any) => ({...prev, settings: {...prev.settings, position: val}}))}
+                        />
+                    </BlockStack>
+
+                    <Button variant="primary" size="large" onClick={() => handleNextStep(configOptions, true)}>
+                        Finish Setup
+                    </Button>
+                </BlockStack>
+            </Card>
+        </Layout.Section>
+
+        {/* RIGHT: PREVIEW */}
+        <Layout.Section>
+             <Card>
+                <BlockStack gap="400">
+                    <Text variant="headingSm" as="h2">Live Preview</Text>
+                    <Box 
+                        background="bg-surface-secondary" 
+                        padding="400" 
+                        borderRadius="300"
+                        minHeight="500px"
+                    >
+                         <div className="preview-container desktop">
+                            {/* MOCK BROWSER */}
+                            <div className="mock-browser">
+                                <div className="mock-header">
+                                    <div className="mock-dot red"></div>
+                                    <div className="mock-dot yellow"></div>
+                                    <div className="mock-dot green"></div>
+                                    <div className="mock-url">yourstore.com/products/classic-tshirt</div>
+                                </div>
+                                
+                                <div className="mock-content">
+                                    <div className="mock-hero">
+                                        <div className="mock-img-placeholder"></div>
+                                        <div className="mock-details">
+                                            <div className="mock-line title"></div>
+                                            <div className="mock-line price"></div>
+                                            <div className="mock-line desc"></div>
+                                            <div className="mock-line desc short"></div>
+                                            <div className="mock-atc-btn">Add to Cart</div>
+                                        </div>
+                                    </div>
+                                    <div className="mock-section"></div>
+                                </div>
+
+                                {/* ACTUAL STICKY BAR RENDER */}
+                                <div 
+                                    className={`sticky-bar-preview ${configOptions.settings.position}`}
+                                    style={{
+                                        '--sb-bg': configOptions.display.backgroundColor,
+                                        '--sb-text': configOptions.display.textColor,
+                                        '--sb-btn-bg': configOptions.button.color,
+                                        '--sb-btn-text': configOptions.button.textColor,
+                                        '--sb-radius': configOptions.display.rounded === 'pill' ? '999px' : (configOptions.display.rounded === 'rounded' ? '12px' : '0px'),
+                                        '--sb-blur': configOptions.display.glassy ? '10px' : '0px',
+                                        '--sb-layout-margin': configOptions.settings.layout === 'floating' ? '20px' : '0px',
+                                        '--sb-layout-width': configOptions.settings.layout === 'floating' ? 'calc(100% - 40px)' : '100%',
+                                        '--sb-layout-radius': configOptions.settings.layout === 'floating' ? '16px' : '0px',
+                                    } as any}
+                                >
+                                    {configOptions.announcement?.enabled && (
+                                        <div className="sb-announcement" style={{
+                                            backgroundColor: configOptions.announcement.backgroundColor,
+                                            color: configOptions.announcement.color
+                                        }}>
+                                            {configOptions.announcement.text}
+                                        </div>
+                                    )}
+                                    
+                                    <div className="sb-main">
+                                        <div className="sb-product">
+                                            {configOptions.product.showImage && <div className="sb-thumb"></div>}
+                                            <div className="sb-info">
+                                                {configOptions.product.showTitle && <span className="sb-title">Classic T-Shirt</span>}
+                                                {configOptions.product.showPrice && <span className="sb-price">$29.00</span>}
+                                            </div>
+                                        </div>
+
+                                        <div className="sb-actions">
+                                            {configOptions.controls.showVariantSelector && (
+                                                <div className="sb-variant-select">Medium / Black</div>
+                                            )}
+                                            {configOptions.controls.showQuantitySelector && (
+                                                 <div style={{border:'1px solid rgba(255,255,255,0.3)', borderRadius: 4, padding: '6px 10px', fontSize: 13, opacity: 0.8}}>1</div>
+                                            )}
+                                            <button className="sb-atc-button">
+                                                {configOptions.button.text}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </Box>
+                </BlockStack>
+            </Card>
+        </Layout.Section>
+      </Layout>
+    </BlockStack>
+  );
+
+  // DASHBOARD (Post-Setup)
+  const renderDashboard = () => (
+    <BlockStack gap="500">
+       <Banner tone="success" onDismiss={() => {}}>
+        <p>Setup complete! Your sticky bar is active.</p>
+      </Banner>
+
+      <Layout>
+        <Layout.Section variant="oneHalf">
+           <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between">
+                <Text variant="headingMd" as="h2">App Status</Text>
+                <Badge tone={isAppEnabled ? "success" : "attention"}>{isAppEnabled ? "Active" : "Inactive"}</Badge>
+              </InlineStack>
+              <Text as="p">
+                {isAppEnabled 
+                  ? "The sticky bar is currently visible on your storefront." 
+                  : "The sticky bar is disabled. Enable it to start converting visitors."}
+              </Text>
+              <InlineStack gap="300">
+                <Button onClick={() => openThemeEditor()}>Theme Editor</Button>
+                <Button icon={RefreshIcon} onClick={() => handleNextStep({ reset: true })}>Reset Setup</Button>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+        
+        <Layout.Section variant="oneHalf">
+           <Card>
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Customization</Text>
+              <Text as="p">
+                Want to change the look? Tweak colors, settings, and more.
+              </Text>
+              <Button variant="primary" onClick={() => navigate("/app/customize")} icon={EditIcon}>
+                Customize Appearance
+              </Button>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </BlockStack>
+  );
 
   return (
-    <Page title="Unfair Cart Pop Up">
-      <BlockStack gap="500">
-        
-        {/* Setup Guide Card */}
-        <Card>
-          <BlockStack gap="400">
-            {/* Header */}
-            <InlineStack align="space-between" blockAlign="start">
-              <BlockStack gap="100">
-                <Text variant="headingMd" as="h2">Setup Guide</Text>
-                <Text tone="subdued" as="p">Follow these steps to start using Unfair Cart Pop Up</Text>
-              </BlockStack>
-              <InlineStack gap="200">
-                <Button icon={MenuHorizontalIcon} variant="plain" accessibilityLabel="Options" />
-                <Button icon={ChevronUpIcon} variant="plain" accessibilityLabel="Collapse" />
-              </InlineStack>
-            </InlineStack>
+    <Page fullWidth>
+      {!setupComplete ? (
+        <div style={{maxWidth: '800px', margin: '0 auto'}}>
+          <BlockStack gap="600">
+             {/* Stepper Progress */}
+             <BlockStack gap="200">
+               <InlineStack align="space-between">
+                  <Text variant="bodySm" tone="subdued" as="span">Step {step} of 3</Text>
+                  <Text variant="bodySm" tone="subdued" as="span">{Math.round(((step - 1) / 3) * 100)}% Complete</Text>
+               </InlineStack>
+               <ProgressBar progress={((step - 1) / 3) * 100} size="small" tone="primary" />
+             </BlockStack>
 
-            {/* Progress Bar */}
-            <BlockStack gap="200">
-              <Text variant="bodySm" tone="subdued" as="span">{completedSteps.length} / 3 completed</Text>
-              <ProgressBar progress={progress} size="small" tone="primary" />
-            </BlockStack>
-
-            <Divider />
-
-            {/* Steps */}
-            <BlockStack gap="300">
-              {/* Step 1 */}
-              <div 
-                style={{ 
-                  border: '1px solid #E1E3E5', 
-                  borderRadius: '8px', 
-                  overflow: 'hidden'
-                }}
-              >
-                <div 
-                  onClick={() => handleStepClick(1)} 
-                  style={{ 
-                    cursor: 'pointer',
-                    padding: '16px',
-                    backgroundColor: expandedStep === 1 ? '#F7F7F8' : 'white',
-                    transition: 'background-color 0.2s'
-                  }}
-                >
-                  <InlineStack align="space-between" blockAlign="center">
-                    <InlineStack gap="300" blockAlign="center">
-                      <div onClick={(e) => { e.stopPropagation(); toggleStepCompletion(1); }}>
-                        <Icon 
-                          source={completedSteps.includes(1) ? CheckCircleIcon : CircleUpIcon}
-                          tone={completedSteps.includes(1) ? "success" : "subdued"} 
-                        />
-                      </div>
-                      <BlockStack gap="0">
-                        <Text variant="bodyMd" fontWeight="bold" as="span">Activate app embed in Shopify</Text>
-                        {isEmbedActive && (
-                          <Text variant="bodySm" tone="success" as="span">Detected as active</Text>
-                        )}
-                      </BlockStack>
-                    </InlineStack>
-                  </InlineStack>
-                </div>
-                
-                <Collapsible
-                  open={expandedStep === 1}
-                  id="step-1-collapsible"
-                  transition={{duration: '300ms', timingFunction: 'ease-in-out'}}
-                  expandOnPrint
-                >
-                  <div style={{ padding: '0 16px 16px 16px', backgroundColor: '#F7F7F8' }}>
-                    <BlockStack gap="400">
-                      <Text tone="subdued" as="p">
-                        Activate and save the app embed in your theme settings to make your Sticky Add to Cart Bar live.
-                      </Text>
-                      <InlineStack gap="300">
-                        <Button variant="primary" onClick={openThemeEditor}>Activate</Button>
-                        <Button variant="plain" onClick={() => toggleStepCompletion(1)}>I've done it</Button>
-                      </InlineStack>
-                    </BlockStack>
-                  </div>
-                </Collapsible>
-              </div>
-
-              {/* Step 2 */}
-              <div 
-                style={{ 
-                  border: '1px solid #E1E3E5', 
-                  borderRadius: '8px', 
-                  overflow: 'hidden'
-                }}
-              >
-                 <div 
-                  onClick={() => handleStepClick(2)} 
-                  style={{ 
-                    cursor: 'pointer',
-                    padding: '16px',
-                    backgroundColor: expandedStep === 2 ? '#F7F7F8' : 'white',
-                    transition: 'background-color 0.2s'
-                  }}
-                >
-                  <InlineStack align="space-between" blockAlign="center">
-                    <InlineStack gap="300" blockAlign="center">
-                       <div onClick={(e) => { e.stopPropagation(); toggleStepCompletion(2); }}>
-                        <Icon 
-                          source={completedSteps.includes(2) ? CheckCircleIcon : CircleUpIcon}
-                          tone={completedSteps.includes(2) ? "success" : "subdued"} 
-                        />
-                      </div>
-                      <Text variant="bodyMd" fontWeight={expandedStep === 2 ? "bold" : "regular"} as="span">
-                        Enable & Customise Sticky Add to Cart
-                      </Text>
-                    </InlineStack>
-                  </InlineStack>
-                </div>
-
-                <Collapsible
-                  open={expandedStep === 2}
-                  id="step-2-collapsible"
-                  transition={{duration: '300ms', timingFunction: 'ease-in-out'}}
-                  expandOnPrint
-                >
-                  <div style={{ padding: '0 16px 16px 16px', backgroundColor: '#F7F7F8' }}>
-                    <BlockStack gap="400">
-                      <Text tone="subdued" as="p">
-                        Customize the look and feel of your sticky add to cart bar to match your brand.
-                      </Text>
-                      <InlineStack gap="300">
-                        <Button variant="primary" onClick={() => navigate("/app/customize")}>Customize</Button>
-                        <Button variant="plain" onClick={() => toggleStepCompletion(2)}>I've done it</Button>
-                      </InlineStack>
-                    </BlockStack>
-                  </div>
-                </Collapsible>
-              </div>
-
-              {/* Step 3 */}
-               <div 
-                style={{ 
-                  border: '1px solid #E1E3E5', 
-                  borderRadius: '8px', 
-                  overflow: 'hidden'
-                }}
-              >
-                 <div 
-                  onClick={() => handleStepClick(3)} 
-                  style={{ 
-                    cursor: 'pointer',
-                    padding: '16px',
-                    backgroundColor: expandedStep === 3 ? '#F7F7F8' : 'white',
-                    transition: 'background-color 0.2s'
-                  }}
-                >
-                  <InlineStack align="space-between" blockAlign="center">
-                    <InlineStack gap="300" blockAlign="center">
-                       <div onClick={(e) => { e.stopPropagation(); toggleStepCompletion(3); }}>
-                        <Icon 
-                          source={completedSteps.includes(3) ? CheckCircleIcon : CircleUpIcon}
-                          tone={completedSteps.includes(3) ? "success" : "subdued"} 
-                        />
-                      </div>
-                      <Text variant="bodyMd" fontWeight={expandedStep === 3 ? "bold" : "regular"} as="span">
-                        Confirm Sticky Add to Cart is working properly
-                      </Text>
-                    </InlineStack>
-                  </InlineStack>
-                </div>
-
-                <Collapsible
-                  open={expandedStep === 3}
-                  id="step-3-collapsible"
-                  transition={{duration: '300ms', timingFunction: 'ease-in-out'}}
-                  expandOnPrint
-                >
-                  <div style={{ padding: '0 16px 16px 16px', backgroundColor: '#F7F7F8' }}>
-                    <BlockStack gap="400">
-                       <Text tone="subdued" as="p">
-                        Check your storefront to ensure the sticky bar appears on product pages as expected.
-                      </Text>
-                      <InlineStack gap="300">
-                        <Button onClick={() => window.open(`https://${shop}`, '_blank')}>View Store</Button>
-                         <Button variant="plain" onClick={() => toggleStepCompletion(3)}>It works</Button>
-                      </InlineStack>
-                    </BlockStack>
-                  </div>
-                </Collapsible>
-              </div>
-            </BlockStack>
+             {step === 1 && renderStep1()}
+             {step === 2 && renderStep2()}
+             {step === 3 && renderStep3()}
           </BlockStack>
-        </Card>
-
-        {/* Illustration Module */}
-        <Card padding="0">
-          <BlockStack gap="0">
-            {/* Image Placeholder Area */}
-            <div style={{
-              backgroundColor: '#4a4a4a', 
-              height: '240px', 
-              width: '100%',
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              borderTopLeftRadius: 'var(--p-border-radius-200)',
-              borderTopRightRadius: 'var(--p-border-radius-200)',
-              overflow: 'hidden'
-            }}>
-              {/* You can replace this with an actual image if you have one. 
-                  For now, creating a mockup look with CSS/Polaris is complex inside the rect, 
-                  so a solid color placeholder with maybe a text or icon is safest.
-              */}
-               <div style={{
-                  width: '80%',
-                  height: '80%',
-                  backgroundColor: '#f1f2f4',
-                  borderRadius: '16px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  padding: '20px'
-               }}>
-                  {/* Mockup Screen Content */}
-                  <div style={{width: '40%', height: '20px', backgroundColor: '#d9d9d9', borderRadius: '4px', marginBottom: '10px'}}></div>
-                  <div style={{width: '100%', height: '10px', backgroundColor: '#e8e8e8', borderRadius: '4px', marginBottom: '8px'}}></div>
-                  <div style={{width: '90%', height: '10px', backgroundColor: '#e8e8e8', borderRadius: '4px', marginBottom: '8px'}}></div>
-                  <div style={{marginTop: 'auto', display: 'flex', justifyContent: 'flex-end'}}>
-                     <div style={{width: '80px', height: '30px', backgroundColor: '#005bd3', borderRadius: '4px'}}></div>
-                  </div>
-               </div>
-            </div>
-
-            {/* Footer Content */}
-            <Box padding="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <InlineStack gap="200" blockAlign="center">
-                    <Text variant="headingSm" as="h3">Unfair Cart Pop Up</Text>
-                    <Badge tone={isAppEnabled ? "success" : "attention"}>
-                      {isAppEnabled ? "On" : "Off"}
-                    </Badge>
-                  </InlineStack>
-                  <Text tone="subdued" as="p">
-                    Enable Unfair Cart Pop Up to increase conversions and customise to fit your store style.
-                  </Text>
-                </BlockStack>
-                <InlineStack gap="200">
-                  <Button onClick={handleToggleApp}>
-                    {isAppEnabled ? "Disable" : "Enable"}
-                  </Button>
-                  <Button variant="primary" onClick={() => navigate("/app/customize")}>Customize</Button>
-                </InlineStack>
-              </InlineStack>
-            </Box>
-          </BlockStack>
-        </Card>
-
-      </BlockStack>
+        </div>
+      ) : (
+        renderDashboard()
+      )}
     </Page>
   );
 }
