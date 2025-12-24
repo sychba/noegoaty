@@ -19,7 +19,11 @@ import {
   Layout,
   Banner,
   Select,
+  RadioButton,
 } from "@shopify/polaris";
+// @ts-ignore
+// import { ResourcePicker } from "@shopify/app-bridge-react"; 
+// V4 removed ResourcePicker component. We must use window.shopify.resourcePicker
 import {
   EditIcon,
   AppsIcon,
@@ -95,8 +99,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // 2. Fetch Theme Settings (for embed check)
   let themeData = null;
+  let firstProduct = null;
+
   try {
-    const themesQuery = await admin.graphql(
+    const dataQuery = await admin.graphql(
       `query {
         themes(first: 1, roles: MAIN) {
           edges {
@@ -116,12 +122,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             }
           }
         }
+        products(first: 1, sortKey: CREATED_AT, reverse: false) {
+          edges {
+            node {
+              title
+              handle
+              featuredImage {
+                url
+              }
+              variants(first: 1) {
+                edges {
+                  node {
+                    price
+                    title
+                  }
+                }
+              }
+            }
+          }
+        }
       }`
     );
-    const themesResponse = await themesQuery.json();
-    themeData = themesResponse.data?.themes?.edges?.[0]?.node;
+    const dataResponse = await dataQuery.json();
+    themeData = dataResponse.data?.themes?.edges?.[0]?.node;
+    firstProduct = dataResponse.data?.products?.edges?.[0]?.node;
   } catch (error) {
-    console.warn("Could not fetch theme settings.", error);
+    console.warn("Could not fetch theme/product settings.", error);
   }
 
   // Parse Config
@@ -158,7 +184,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     isAppEnabled,
     isEmbedActive,
     shopId: shopData.id,
-    storedConfig // Pass this to pre-fill config form
+    storedConfig, // Pass this to pre-fill config form
+    firstProduct
   };
 };
 
@@ -247,13 +274,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Index() {
-  const { shop, setupComplete, currentStep, isAppEnabled, isEmbedActive, shopId, storedConfig } = useLoaderData<typeof loader>();
+  const { shop, setupComplete, currentStep, isAppEnabled, isEmbedActive, shopId, storedConfig, firstProduct } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const submit = useSubmit();
 
   // Local state for the stepper
   const [step, setStep] = useState(currentStep);
   const [loading, setLoading] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"desktop" | "mobile">("desktop");
+
+  // Targeting State for Step 2
+  const [targetingRule, setTargetingRule] = useState<'all' | 'specific'>('all');
+  // const [showResourcePicker, setShowResourcePicker] = useState(false); // No longer needed as state, we call function
+  const [selectedPreviewProduct, setSelectedPreviewProduct] = useState<any>(firstProduct);
 
   // Config State for Step 3
   const [configOptions, setConfigOptions] = useState<any>({
@@ -306,6 +339,43 @@ export default function Index() {
     window.open(`https://${shop}/admin/themes/current/editor?context=apps`, '_blank');
   };
 
+  const openResourcePicker = async () => {
+      // @ts-ignore
+      if (window.shopify) {
+          // @ts-ignore
+          const selected = await window.shopify.resourcePicker({
+              type: 'product',
+              multiple: false,
+              action: 'select'
+          });
+          
+          if (selected && selected.length > 0) {
+              handleResourceSelection(selected[0]);
+          }
+      } else {
+          console.warn("Shopify App Bridge not found");
+      }
+  };
+
+  const handleResourceSelection = (selection: any) => {
+    if (selection) {
+        const product = {
+            title: selection.title,
+            handle: selection.handle,
+            featuredImage: selection.images?.[0] ? { url: selection.images[0].originalSrc } : null,
+            variants: {
+                edges: selection.variants?.map((v: any) => ({
+                    node: {
+                        price: v.price,
+                        title: v.title
+                    }
+                })) || []
+            }
+        };
+        setSelectedPreviewProduct(product);
+    }
+  };
+
   // --- RENDER HELPERS ---
 
   // STEP 1: WELCOME & ACTIVATE
@@ -356,8 +426,75 @@ export default function Index() {
     </BlockStack>
   );
 
-  // STEP 2: STYLE SELECTION
+  // STEP 2: DISPLAY SETTINGS (TARGETING)
   const renderStep2 = () => (
+      <BlockStack gap="500">
+        <BlockStack gap="200">
+          <InlineStack align="space-between" blockAlign="center">
+              <BlockStack gap="100">
+                  <Text variant="headingLg" as="h2">Where to Display?</Text>
+                  <Text tone="subdued" as="p">Choose where the sticky bar should appear and pick a product to preview.</Text>
+              </BlockStack>
+              <Button variant="plain" icon={ArrowLeftIcon} onClick={handleBackStep}>Back</Button>
+          </InlineStack>
+        </BlockStack>
+
+        <Card>
+            <BlockStack gap="400">
+                <Text variant="headingSm" as="h3">Display Rules</Text>
+                <BlockStack gap="200">
+                    <RadioButton
+                        label="All Products (Recommended)"
+                        helpText="Show the sticky bar on every product page."
+                        checked={targetingRule === 'all'}
+                        id="target_all"
+                        name="targeting"
+                        onChange={() => setTargetingRule('all')}
+                    />
+                    <RadioButton
+                        label="Specific Products"
+                        helpText="Only show on selected products."
+                        checked={targetingRule === 'specific'}
+                        id="target_specific"
+                        name="targeting"
+                        onChange={() => {
+                            setTargetingRule('specific');
+                            openResourcePicker();
+                        }}
+                    />
+                </BlockStack>
+
+                <Divider />
+
+                <BlockStack gap="200">
+                    <Text variant="headingSm" as="h3">Preview Product</Text>
+                    <Text tone="subdued" as="p">This product will be used to generate the live preview in the next steps.</Text>
+                    
+                    <InlineStack align="start" blockAlign="center" gap="400">
+                         {selectedPreviewProduct?.featuredImage?.url && (
+                             <img 
+                                src={selectedPreviewProduct.featuredImage.url} 
+                                alt="" 
+                                style={{width: 60, height: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid #eee'}} 
+                            />
+                         )}
+                         <BlockStack gap="100">
+                             <Text variant="bodyMd" fontWeight="bold" as="span">{selectedPreviewProduct?.title || "No product selected"}</Text>
+                             <Button variant="plain" onClick={() => openResourcePicker()}>Change Preview Product</Button>
+                         </BlockStack>
+                    </InlineStack>
+                </BlockStack>
+
+                <InlineStack align="end">
+                    <Button variant="primary" onClick={() => handleNextStep()}>Next Step</Button>
+                </InlineStack>
+            </BlockStack>
+        </Card>
+      </BlockStack>
+  );
+
+  // STEP 3: STYLE SELECTION
+  const renderStep3 = () => (
     <BlockStack gap="500">
       <BlockStack gap="200">
         <InlineStack align="space-between" blockAlign="center">
@@ -369,78 +506,210 @@ export default function Index() {
         </InlineStack>
       </BlockStack>
 
-      <Grid>
-        {PRESETS.map((preset) => (
-          <Grid.Cell key={preset.id} columnSpan={{xs: 6, sm: 6, md: 3, lg: 3, xl: 3}}>
-            <div 
-              style={{cursor: 'pointer', height: '100%'}}
-              onClick={() => {
-                // Update local config with preset values but don't save to backend yet
-                setConfigOptions((prev: any) => ({
-                    ...prev,
-                    ...preset.config,
-                    // Ensure we merge deep objects if needed, but presets are usually complete for their sections
-                    display: { ...prev.display, ...preset.config.display },
-                    button: { ...prev.button, ...preset.config.button },
-                    settings: { ...prev.settings, ...preset.config.settings }
-                }));
-                handleNextStep(null, false); // Just move to next step, don't save config yet
-              }}
-            >
-              <Card>
-                <BlockStack gap="300">
-                  {/* Mini Preview Visualization */}
-                  <Box 
-                    background="bg-surface-secondary" 
-                    padding="400" 
-                    borderRadius="200"
-                    minHeight="120px"
-                  >
-                    <div style={{
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center', 
-                      height: '100%',
-                      position: 'relative'
-                    }}>
-                      <div style={{
-                        width: '100%',
-                        padding: '8px',
-                        background: preset.config.display.backgroundColor,
-                        color: preset.config.display.textColor,
-                        borderRadius: preset.config.display.rounded === 'pill' ? '20px' : (preset.config.display.rounded === 'rounded' ? '6px' : '0px'),
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                        display: 'flex',
-                        gap: '8px',
-                        alignItems: 'center'
-                      }}>
-                         <div style={{width: 20, height: 20, background: '#ddd', borderRadius: 4}}></div>
-                         <div style={{flex: 1, height: 6, background: preset.config.display.textColor, opacity: 0.3, borderRadius: 2}}></div>
-                         <div style={{
-                           width: 30, 
-                           height: 20, 
-                           background: preset.config.button.color, 
-                           borderRadius: 4
-                         }}></div>
-                      </div>
-                    </div>
-                  </Box>
-                  <BlockStack gap="100">
-                    <Text variant="headingSm" as="h3">{preset.title}</Text>
-                    <Text variant="bodySm" tone="subdued" as="p">{preset.description}</Text>
-                  </BlockStack>
-                  <Button fullWidth>Select</Button>
+      <Layout>
+        {/* LEFT: PRESETS */}
+        <Layout.Section variant="oneThird">
+            <BlockStack gap="400">
+                <Grid>
+                    {PRESETS.map((preset) => (
+                    <Grid.Cell key={preset.id} columnSpan={{xs: 6, sm: 6, md: 6, lg: 6, xl: 6}}>
+                        <div 
+                        style={{cursor: 'pointer'}}
+                        onClick={() => {
+                            // Update local config with preset values immediately
+                            setConfigOptions((prev: any) => ({
+                                ...prev,
+                                ...preset.config,
+                                display: { ...prev.display, ...preset.config.display },
+                                button: { ...prev.button, ...preset.config.button },
+                                settings: { ...prev.settings, ...preset.config.settings }
+                            }));
+                        }}
+                        >
+                        <Card>
+                            <BlockStack gap="300">
+                                {/* Visual Indicator for Selection */}
+                                <div style={{
+                                    border: JSON.stringify(configOptions.display) === JSON.stringify({ ...configOptions.display, ...preset.config.display }) 
+                                            && configOptions.button.color === preset.config.button.color
+                                            ? '2px solid #005bd3' : '2px solid transparent',
+                                    borderRadius: '8px',
+                                    padding: '4px',
+                                    margin: '-4px'
+                                }}>
+                                    <BlockStack gap="100">
+                                        <Text variant="headingSm" as="h3">{preset.title}</Text>
+                                        <Text variant="bodySm" tone="subdued" as="p">{preset.description}</Text>
+                                    </BlockStack>
+                                </div>
+                            </BlockStack>
+                        </Card>
+                        </div>
+                    </Grid.Cell>
+                    ))}
+                </Grid>
+                <Button fullWidth variant="primary" size="large" onClick={() => handleNextStep(null, false)}>
+                    Continue with this Style
+                </Button>
+            </BlockStack>
+        </Layout.Section>
+
+        {/* RIGHT: PREVIEW */}
+        <Layout.Section>
+             <Card>
+                <BlockStack gap="400">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text variant="headingSm" as="h2">Live Preview</Text>
+                      <InlineStack gap="200">
+                        <Button
+                          size="slim"
+                          variant={previewMode === "desktop" ? "primary" : "tertiary"}
+                          icon={DesktopIcon}
+                          onClick={() => setPreviewMode("desktop")}
+                        >
+                          Desktop
+                        </Button>
+                        <Button
+                          size="slim"
+                          variant={previewMode === "mobile" ? "primary" : "tertiary"}
+                          icon={MobileIcon}
+                          onClick={() => setPreviewMode("mobile")}
+                        >
+                          Mobile
+                        </Button>
+                      </InlineStack>
+                    </InlineStack>
+                    <Box 
+                        background="bg-surface-secondary" 
+                        padding="400" 
+                        borderRadius="300"
+                        minHeight="500px"
+                    >
+                        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+                          <div className={`preview-container ${previewMode}`}>
+                            <div className="mock-browser">
+                                <div className="mock-header">
+                                    <div className="mock-dot red"></div>
+                                    <div className="mock-dot yellow"></div>
+                                    <div className="mock-dot green"></div>
+                                    <div className="mock-url">{shop}/products/{selectedPreviewProduct?.handle || 'example-product'}</div>
+                                </div>
+                                
+                                <div className="mock-content" style={{overflow: "hidden", position: "relative"}}>
+                                   {selectedPreviewProduct ? (
+                                       <div className="mock-store-preview" style={{
+                                           width: "100%", 
+                                           height: "100%", 
+                                           background: "#fff", 
+                                           display: "flex", 
+                                           flexDirection: "column"
+                                        }}>
+                                            <div style={{height: 60, borderBottom: "1px solid #eee", display: "flex", alignItems: "center", padding: "0 20px", justifyContent: "space-between"}}>
+                                                <div style={{fontWeight: "bold", fontSize: 18}}>{shop.split(".")[0].toUpperCase()}</div>
+                                                <div style={{display: "flex", gap: 10}}>
+                                                    <div style={{width: 20, height: 2, background: "#333"}}></div>
+                                                    <div style={{width: 20, height: 2, background: "#333"}}></div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div style={{flex: 1, padding: "40px", display: "flex", gap: "40px", maxWidth: "900px", margin: "0 auto"}}>
+                                                <div style={{flex: 1}}>
+                                                    {selectedPreviewProduct.featuredImage?.url ? (
+                                                        <img src={selectedPreviewProduct.featuredImage.url} alt={selectedPreviewProduct.title} style={{width: "100%", borderRadius: 8}} />
+                                                    ) : (
+                                                        <div style={{width: "100%", paddingBottom: "100%", background: "#f4f4f4", borderRadius: 8}}></div>
+                                                    )}
+                                                </div>
+                                                <div style={{flex: 1, paddingTop: 20}}>
+                                                    <h1 style={{fontSize: 24, fontWeight: "bold", marginBottom: 10}}>{selectedPreviewProduct.title}</h1>
+                                                    <div style={{fontSize: 20, marginBottom: 20}}>${selectedPreviewProduct.variants?.edges?.[0]?.node?.price || "29.00"}</div>
+                                                    <div style={{height: 100, background: "#f9f9f9", marginBottom: 20, borderRadius: 4}}></div>
+                                                    <div style={{height: 50, background: "#202223", borderRadius: 4, width: "200px"}}></div>
+                                                </div>
+                                            </div>
+                                       </div>
+                                   ) : (
+                                    <div className="mock-hero">
+                                        <div className="mock-img-placeholder"></div>
+                                        <div className="mock-details">
+                                            <div className="mock-line title"></div>
+                                            <div className="mock-line price"></div>
+                                            <div className="mock-line desc"></div>
+                                            <div className="mock-line desc short"></div>
+                                            <div className="mock-atc-btn">Add to Cart</div>
+                                        </div>
+                                    </div>
+                                   )}
+                                </div>
+
+                                <div 
+                                    className={`sticky-bar-preview ${configOptions.settings.position}`}
+                                    style={{
+                                        '--sb-bg': configOptions.display.backgroundColor,
+                                        '--sb-text': configOptions.display.textColor,
+                                        '--sb-btn-bg': configOptions.button.color,
+                                        '--sb-btn-text': configOptions.button.textColor,
+                                        '--sb-radius': configOptions.display.rounded === 'pill' ? '999px' : (configOptions.display.rounded === 'rounded' ? '12px' : '0px'),
+                                        '--sb-blur': configOptions.display.glassy ? '10px' : '0px',
+                                        '--sb-layout-margin': configOptions.settings.layout === 'floating' ? '20px' : '0px',
+                                        '--sb-layout-width': configOptions.settings.layout === 'floating' ? 'calc(100% - 40px)' : '100%',
+                                        '--sb-layout-radius': configOptions.settings.layout === 'floating' ? '16px' : '0px',
+                                    } as any}
+                                >
+                                    {configOptions.announcement?.enabled && (
+                                        <div className="sb-announcement" style={{
+                                            backgroundColor: configOptions.announcement.backgroundColor,
+                                            color: configOptions.announcement.color
+                                        }}>
+                                            {configOptions.announcement.text}
+                                        </div>
+                                    )}
+                                    
+                                    <div className="sb-main">
+                                        <div className="sb-product">
+                                            {configOptions.product.showImage && (
+                                                selectedPreviewProduct?.featuredImage?.url ? (
+                                                    <img src={selectedPreviewProduct.featuredImage.url} alt="" className="sb-thumb-img" style={{width: 40, height: 40, objectFit: 'cover', borderRadius: 4}} />
+                                                ) : (
+                                                    <div className="sb-thumb"></div>
+                                                )
+                                            )}
+                                            <div className="sb-info">
+                                                {configOptions.product.showTitle && <span className="sb-title">{selectedPreviewProduct?.title || 'Classic T-Shirt'}</span>}
+                                                {configOptions.product.showPrice && <span className="sb-price">${selectedPreviewProduct?.variants?.edges?.[0]?.node?.price || '29.00'}</span>}
+                                            </div>
+                                        </div>
+
+                                        <div className="sb-actions">
+                                            {configOptions.controls.showVariantSelector && (
+                                                <div className="sb-variant-select">
+                                                    {selectedPreviewProduct?.variants?.edges?.[0]?.node?.title !== 'Default Title' 
+                                                        ? selectedPreviewProduct?.variants?.edges?.[0]?.node?.title 
+                                                        : 'One Size'}
+                                                </div>
+                                            )}
+                                            {configOptions.controls.showQuantitySelector && (
+                                                 <div style={{border:"1px solid rgba(255,255,255,0.3)", borderRadius: 4, padding: "6px 10px", fontSize: 13, opacity: 0.8}}>1</div>
+                                            )}
+                                            <button className="sb-atc-button">
+                                                {configOptions.button.text}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                          </div>
+                        </div>
+                    </Box>
                 </BlockStack>
-              </Card>
-            </div>
-          </Grid.Cell>
-        ))}
-      </Grid>
+            </Card>
+        </Layout.Section>
+      </Layout>
     </BlockStack>
   );
 
-  // STEP 3: CUSTOMIZE & PREVIEW
-  const renderStep3 = () => (
+  // STEP 4: CUSTOMIZE & PREVIEW
+  const renderStep4 = () => (
     <BlockStack gap="500">
       <BlockStack gap="200">
         <InlineStack align="space-between" blockAlign="center">
@@ -520,24 +789,77 @@ export default function Index() {
         <Layout.Section>
              <Card>
                 <BlockStack gap="400">
-                    <Text variant="headingSm" as="h2">Live Preview</Text>
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text variant="headingSm" as="h2">Live Preview</Text>
+                      <InlineStack gap="200">
+                        <Button
+                          size="slim"
+                          variant={previewMode === "desktop" ? "primary" : "tertiary"}
+                          icon={DesktopIcon}
+                          onClick={() => setPreviewMode("desktop")}
+                        >
+                          Desktop
+                        </Button>
+                        <Button
+                          size="slim"
+                          variant={previewMode === "mobile" ? "primary" : "tertiary"}
+                          icon={MobileIcon}
+                          onClick={() => setPreviewMode("mobile")}
+                        >
+                          Mobile
+                        </Button>
+                      </InlineStack>
+                    </InlineStack>
                     <Box 
                         background="bg-surface-secondary" 
                         padding="400" 
                         borderRadius="300"
                         minHeight="500px"
                     >
-                         <div className="preview-container desktop">
-                            {/* MOCK BROWSER */}
+                         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+                           <div className={`preview-container ${previewMode}`}>
                             <div className="mock-browser">
                                 <div className="mock-header">
                                     <div className="mock-dot red"></div>
                                     <div className="mock-dot yellow"></div>
                                     <div className="mock-dot green"></div>
-                                    <div className="mock-url">yourstore.com/products/classic-tshirt</div>
+                                    <div className="mock-url">{shop}/products/{selectedPreviewProduct?.handle || 'example-product'}</div>
                                 </div>
                                 
-                                <div className="mock-content">
+                                <div className="mock-content" style={{overflow: "hidden", position: "relative"}}>
+                                   {selectedPreviewProduct ? (
+                                       <div className="mock-store-preview" style={{
+                                           width: "100%", 
+                                           height: "100%", 
+                                           background: "#fff", 
+                                           display: "flex", 
+                                           flexDirection: "column"
+                                        }}>
+                                            <div style={{height: 60, borderBottom: "1px solid #eee", display: "flex", alignItems: "center", padding: "0 20px", justifyContent: "space-between"}}>
+                                                <div style={{fontWeight: "bold", fontSize: 18}}>{shop.split(".")[0].toUpperCase()}</div>
+                                                <div style={{display: "flex", gap: 10}}>
+                                                    <div style={{width: 20, height: 2, background: "#333"}}></div>
+                                                    <div style={{width: 20, height: 2, background: "#333"}}></div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div style={{flex: 1, padding: "40px", display: "flex", gap: "40px", maxWidth: "900px", margin: "0 auto"}}>
+                                                <div style={{flex: 1}}>
+                                                    {selectedPreviewProduct.featuredImage?.url ? (
+                                                        <img src={selectedPreviewProduct.featuredImage.url} alt={selectedPreviewProduct.title} style={{width: "100%", borderRadius: 8}} />
+                                                    ) : (
+                                                        <div style={{width: "100%", paddingBottom: "100%", background: "#f4f4f4", borderRadius: 8}}></div>
+                                                    )}
+                                                </div>
+                                                <div style={{flex: 1, paddingTop: 20}}>
+                                                    <h1 style={{fontSize: 24, fontWeight: "bold", marginBottom: 10}}>{selectedPreviewProduct.title}</h1>
+                                                    <div style={{fontSize: 20, marginBottom: 20}}>${selectedPreviewProduct.variants?.edges?.[0]?.node?.price || "29.00"}</div>
+                                                    <div style={{height: 100, background: "#f9f9f9", marginBottom: 20, borderRadius: 4}}></div>
+                                                    <div style={{height: 50, background: "#202223", borderRadius: 4, width: "200px"}}></div>
+                                                </div>
+                                            </div>
+                                       </div>
+                                   ) : (
                                     <div className="mock-hero">
                                         <div className="mock-img-placeholder"></div>
                                         <div className="mock-details">
@@ -548,7 +870,7 @@ export default function Index() {
                                             <div className="mock-atc-btn">Add to Cart</div>
                                         </div>
                                     </div>
-                                    <div className="mock-section"></div>
+                                   )}
                                 </div>
 
                                 {/* ACTUAL STICKY BAR RENDER */}
@@ -577,19 +899,29 @@ export default function Index() {
                                     
                                     <div className="sb-main">
                                         <div className="sb-product">
-                                            {configOptions.product.showImage && <div className="sb-thumb"></div>}
+                                            {configOptions.product.showImage && (
+                                                selectedPreviewProduct?.featuredImage?.url ? (
+                                                    <img src={selectedPreviewProduct.featuredImage.url} alt="" className="sb-thumb-img" style={{width: 40, height: 40, objectFit: 'cover', borderRadius: 4}} />
+                                                ) : (
+                                                    <div className="sb-thumb"></div>
+                                                )
+                                            )}
                                             <div className="sb-info">
-                                                {configOptions.product.showTitle && <span className="sb-title">Classic T-Shirt</span>}
-                                                {configOptions.product.showPrice && <span className="sb-price">$29.00</span>}
+                                                {configOptions.product.showTitle && <span className="sb-title">{selectedPreviewProduct?.title || 'Classic T-Shirt'}</span>}
+                                                {configOptions.product.showPrice && <span className="sb-price">${selectedPreviewProduct?.variants?.edges?.[0]?.node?.price || '29.00'}</span>}
                                             </div>
                                         </div>
 
                                         <div className="sb-actions">
                                             {configOptions.controls.showVariantSelector && (
-                                                <div className="sb-variant-select">Medium / Black</div>
+                                                <div className="sb-variant-select">
+                                                    {selectedPreviewProduct?.variants?.edges?.[0]?.node?.title !== 'Default Title' 
+                                                        ? selectedPreviewProduct?.variants?.edges?.[0]?.node?.title 
+                                                        : 'One Size'}
+                                                </div>
                                             )}
                                             {configOptions.controls.showQuantitySelector && (
-                                                 <div style={{border:'1px solid rgba(255,255,255,0.3)', borderRadius: 4, padding: '6px 10px', fontSize: 13, opacity: 0.8}}>1</div>
+                                                 <div style={{border:"1px solid rgba(255,255,255,0.3)", borderRadius: 4, padding: "6px 10px", fontSize: 13, opacity: 0.8}}>1</div>
                                             )}
                                             <button className="sb-atc-button">
                                                 {configOptions.button.text}
@@ -597,9 +929,9 @@ export default function Index() {
                                         </div>
                                     </div>
                                 </div>
-
                             </div>
-                        </div>
+                           </div>
+                         </div>
                     </Box>
                 </BlockStack>
             </Card>
@@ -661,15 +993,16 @@ export default function Index() {
              {/* Stepper Progress */}
              <BlockStack gap="200">
                <InlineStack align="space-between">
-                  <Text variant="bodySm" tone="subdued" as="span">Step {step} of 3</Text>
-                  <Text variant="bodySm" tone="subdued" as="span">{Math.round(((step - 1) / 3) * 100)}% Complete</Text>
+                  <Text variant="bodySm" tone="subdued" as="span">Step {step} of 4</Text>
+                  <Text variant="bodySm" tone="subdued" as="span">{Math.round(((step - 1) / 4) * 100)}% Complete</Text>
                </InlineStack>
-               <ProgressBar progress={((step - 1) / 3) * 100} size="small" tone="primary" />
+               <ProgressBar progress={((step - 1) / 4) * 100} size="small" tone="primary" />
              </BlockStack>
 
              {step === 1 && renderStep1()}
              {step === 2 && renderStep2()}
              {step === 3 && renderStep3()}
+             {step === 4 && renderStep4()}
           </BlockStack>
         </div>
       ) : (
