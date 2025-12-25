@@ -32,3 +32,15 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model DailyStat {
+  id          Int      @id @default(autoincrement())
+  shop        String
+  date        DateTime
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  revenue     Float    @default(0.0)
+  orders      Int      @default(0)
+
+  @@unique([shop, date])
+}

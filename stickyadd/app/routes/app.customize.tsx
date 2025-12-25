@@ -261,7 +261,7 @@ export default function Customize() {
                                 onChange={(val) => updateConfig("enabled", val)}
                             />
                         </InlineStack>
-                        <Text variant="bodySm" tone="subdued">
+                        <Text variant="bodySm" tone="subdued" as="p">
                             {config.enabled ? "The sticky bar is visible on your store." : "The sticky bar is currently hidden."}
                         </Text>
                     </BlockStack>

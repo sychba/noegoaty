@@ -1,6 +1,7 @@
 api_version = "2024-04"
 
 [[extensions]]
+uid = "b0334746-58e7-6a0c-2c48-c6761a89e81465eb3b14"
 type = "theme"
 name = "Sticky Cart Extension"
 handle = "sticky-cart-extension"

@@ -29,10 +29,19 @@
 
 /* Mobile variant */
 .preview-container.mobile .mock-browser {
-  width: 375px;
-  height: 667px;
-  border-radius: 32px;
-  border: 8px solid #202223;
+  width: 320px;
+  height: 700px;
+  border-radius: 45px;
+  border: 10px solid #1a1a1a;
+}
+
+/* Hide Scrollbar */
+.mock-store-preview {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;  /* IE 10+ */
+}
+.mock-store-preview::-webkit-scrollbar { 
+    display: none;  /* Chrome/Safari */
 }
 
 /* Browser Header */
@@ -178,10 +187,14 @@
 }
 
 .preview-container.mobile .sb-main {
-  flex-direction: column;
-  align-items: stretch;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  justify-content: space-between !important;
   gap: 12px;
-  padding: 12px;
+  padding: 6px 12px !important;
+  height: 64px !important; /* Fixed height for consistency */
+  min-height: 0 !important;
 }
 
 .sb-product {
@@ -189,6 +202,12 @@
   align-items: center;
   gap: 12px;
   min-width: 0; /* Prevent flex overflow */
+}
+
+.preview-container.mobile .sb-product {
+    gap: 10px;
+    flex: 1; /* Allow it to take space */
+    width: auto;
 }
 
 .sb-thumb {
@@ -199,11 +218,19 @@
   flex-shrink: 0;
 }
 
+.preview-container.mobile .sb-thumb,
+.preview-container.mobile .sb-thumb-img {
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 6px !important;
+}
+
 .sb-info {
   display: flex;
   flex-direction: column;
   line-height: 1.3;
   overflow: hidden;
+  min-width: 0; /* Enable flex truncation */
 }
 
 .sb-title {
@@ -212,6 +239,11 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.preview-container.mobile .sb-title {
+    font-size: 13px;
+    max-width: 100%; /* Force truncation */
 }
 
 .sb-price {
@@ -226,7 +258,8 @@
   flex-shrink: 0;
 }
 .preview-container.mobile .sb-actions {
-  width: 100%;
+  width: auto !important;
+  gap: 0;
 }
 
 .sb-variant-select {
@@ -239,6 +272,11 @@
 }
 .preview-container.mobile .sb-variant-select {
   display: none; /* Hide on mobile preview for space */
+}
+
+/* Also hide quantity selector on mobile */
+.preview-container.mobile .sb-actions > div[style*="border"] {
+    display: none !important;
 }
 
 .sb-atc-button {
@@ -256,5 +294,12 @@
 .sb-atc-button:hover { opacity: 0.9; }
 
 .preview-container.mobile .sb-atc-button {
-  width: 100%;
+  width: auto !important;
+  padding: 8px 16px !important;
+  font-size: 13px !important;
+  border-radius: 999px !important; /* Force pill shape on mobile button */
+  height: 36px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
