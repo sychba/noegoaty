@@ -303,3 +303,100 @@
   align-items: center !important;
   justify-content: center !important;
 }
+
+/* --- CUSTOM SAVE BAR --- */
+.custom-save-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  background-color: #1a1a1a;
+  color: #ffffff;
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  animation: slideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+.csb-message {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.csb-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.csb-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #e0e0e0;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.csb-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+
+.csb-btn.primary {
+  background: #fff;
+  color: #000;
+}
+
+.csb-btn.primary:hover {
+  background: #f1f1f1;
+}
+
+.csb-btn.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* --- ACCORDION --- */
+.accordion-header {
+  padding: 16px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+  user-select: none;
+}
+
+.accordion-header:hover {
+  background-color: #f7f7f7;
+}
+
+.accordion-header:active {
+  background-color: #f0f0f0;
+}
+
+.accordion-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.3s ease;
+  color: #5c5f62;
+}
+
+.accordion-icon.open {
+  transform: rotate(180deg);
+}

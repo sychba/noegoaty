@@ -37,11 +37,11 @@ import "../styles/customize.css";
 
 // --- DEFAULTS ---
 const DEFAULT_CONFIG = {
-  settings: { position: "bottom", layout: "docked" },
+  settings: { position: "bottom", layout: "floating" },
   product: { showImage: true, showTitle: true, showPrice: true },
   controls: { showVariantSelector: true, showQuantitySelector: true },
-  display: { backgroundColor: "#ffffff", textColor: "#202223", rounded: "rounded", glassy: false },
-  button: { color: "#005bd3", textColor: "#ffffff", text: "Add to cart" },
+  display: { backgroundColor: "#000000", textColor: "#ffffff", rounded: "pill", glassy: true },
+  button: { color: "#2563eb", textColor: "#ffffff", text: "Add to cart" },
   announcement: { enabled: false, text: "", color: "", backgroundColor: "" }
 };
 
@@ -1114,6 +1114,10 @@ export default function Index() {
   );
 
   // DASHBOARD (Post-Setup)
+  const handleSaveDashboardConfig = () => {
+      handleNextStep(configOptions, true);
+  };
+
   const renderDashboard = () => (
     <BlockStack gap="500">
        {showBanner && (
@@ -1155,9 +1159,19 @@ export default function Index() {
         <Layout.Section>
            <Card>
             <BlockStack gap="400">
-              <InlineStack align="space-between">
+              <InlineStack align="space-between" blockAlign="center">
                 <Text variant="headingMd" as="h2">App Status</Text>
-                <Badge tone={isAppEnabled ? "success" : "attention"}>{isAppEnabled ? "Active" : "Inactive"}</Badge>
+                <InlineStack gap="300" blockAlign="center">
+                    <Badge tone={isAppEnabled ? "success" : "attention"}>{isAppEnabled ? "Active" : "Inactive"}</Badge>
+                    <Button 
+                        onClick={() => handleNextStep({ enabled: !isAppEnabled }, true)} 
+                        variant={isAppEnabled ? "primary" : "primary"} 
+                        tone={isAppEnabled ? "critical" : "success"}
+                        loading={loading}
+                    >
+                        {isAppEnabled ? "Turn Off" : "Turn On"}
+                    </Button>
+                </InlineStack>
               </InlineStack>
               <Text as="p">
                 {isAppEnabled 
@@ -1175,13 +1189,187 @@ export default function Index() {
         <Layout.Section>
            <Card>
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">Customization</Text>
-              <Text as="p">
-                Want to change the look? Tweak colors, settings, and more.
-              </Text>
-              <Button variant="primary" onClick={() => navigate("/app/customize")} icon={EditIcon}>
-                Customize Appearance
-              </Button>
+              <InlineStack align="space-between" blockAlign="center">
+                  <BlockStack gap="100">
+                    <Text variant="headingMd" as="h2">Customization</Text>
+                    <Text as="p" tone="subdued">
+                        Quickly tweak the look or access full customization.
+                    </Text>
+                  </BlockStack>
+                  <Button variant="plain" onClick={() => navigate("/app/customize")}>
+                    Full Customization
+                  </Button>
+              </InlineStack>
+
+              {/* Preview Area */}
+              <div style={{ 
+                  background: "#f1f2f4", 
+                  borderRadius: "12px", 
+                  height: "200px", 
+                  position: "relative",
+                  overflow: "hidden",
+                  border: "1px solid #e1e3e5",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center"
+              }}>
+                 {/* Background placeholder to look like a page */}
+                 <div style={{
+                     position: "absolute", 
+                     top: 0, 
+                     left: 0, 
+                     right: 0, 
+                     bottom: 0, 
+                     padding: "20px", 
+                     opacity: 0.4,
+                     pointerEvents: "none"
+                }}>
+                    <div style={{height: "20px", width: "40%", background: "#d1d5db", marginBottom: "15px", borderRadius: "4px"}}></div>
+                    <div style={{height: "120px", width: "100%", background: "#e5e7eb", borderRadius: "8px", marginBottom: "15px"}}></div>
+                    <div style={{height: "15px", width: "80%", background: "#d1d5db", marginBottom: "8px", borderRadius: "4px"}}></div>
+                    <div style={{height: "15px", width: "60%", background: "#d1d5db", marginBottom: "8px", borderRadius: "4px"}}></div>
+                 </div>
+
+                 {/* The Sticky Bar Preview */}
+                 <div 
+                    className={`sticky-bar-preview ${configOptions.settings.position}`}
+                    style={{
+                        '--sb-bg': configOptions.display.backgroundColor,
+                        '--sb-text': configOptions.display.textColor,
+                        '--sb-btn-bg': configOptions.button.color,
+                        '--sb-btn-text': configOptions.button.textColor,
+                        '--sb-radius': configOptions.settings.layout === 'docked' ? '0px' : (configOptions.display.rounded === 'pill' ? '999px' : (configOptions.display.rounded === 'rounded' ? '12px' : '0px')),
+                        '--sb-blur': configOptions.display.glassy ? '12px' : '0px',
+                        '--sb-layout-margin': configOptions.settings.layout === 'floating' ? '20px' : '0px',
+                        '--sb-layout-width': configOptions.settings.layout === 'floating' ? 'calc(100% - 40px)' : '100%',
+                        position: "absolute",
+                        zIndex: 10,
+                        width: "100%"
+                    } as any}
+                >
+                    <div className="sb-main">
+                        <div className="sb-product">
+                            {configOptions.product.showImage && (
+                                <div className="sb-thumb" style={{background: "#ddd", backgroundImage: selectedPreviewProduct?.featuredImage?.url ? `url(${selectedPreviewProduct.featuredImage.url})` : 'none', backgroundSize: 'cover'}}></div>
+                            )}
+                            <div className="sb-info">
+                                {configOptions.product.showTitle && <span className="sb-title">{selectedPreviewProduct?.title || 'Classic T-Shirt'}</span>}
+                                {configOptions.product.showPrice && <span className="sb-price">${selectedPreviewProduct?.variants?.edges?.[0]?.node?.price || '29.00'}</span>}
+                            </div>
+                        </div>
+
+                        <div className="sb-actions">
+                             <button className="sb-atc-button">
+                                {configOptions.button.text}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+              </div>
+
+              {/* Quick Controls */}
+              <BlockStack gap="400">
+                  <InlineStack gap="600" align="start" blockAlign="start">
+                      {/* Button Color */}
+                      <BlockStack gap="200">
+                          <Text variant="bodySm" as="p" fontWeight="bold">Button Color</Text>
+                          <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                              <div style={{
+                                  width: "42px", 
+                                  height: "42px", 
+                                  borderRadius: "50%", 
+                                  overflow: "hidden", 
+                                  border: "1px solid #e1e3e5",
+                                  position: "relative"
+                                }}>
+                                  <input 
+                                      type="color" 
+                                      value={configOptions.button.color}
+                                      onChange={(e) => setConfigOptions((prev: any) => ({...prev, button: {...prev.button, color: e.target.value}}))}
+                                      style={{
+                                          width: "150%", 
+                                          height: "150%", 
+                                          position: "absolute", 
+                                          top: "-25%", 
+                                          left: "-25%", 
+                                          cursor: "pointer", 
+                                          border: "none"
+                                      }}
+                                  />
+                              </div>
+                              <Text variant="bodyMd" tone="subdued" as="span">{configOptions.button.color.toUpperCase()}</Text>
+                          </div>
+                      </BlockStack>
+
+                      {/* Text Color */}
+                      <BlockStack gap="200">
+                          <Text variant="bodySm" as="p" fontWeight="bold">Button Text Color</Text>
+                          <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                               <div style={{
+                                  width: "42px", 
+                                  height: "42px", 
+                                  borderRadius: "50%", 
+                                  overflow: "hidden", 
+                                  border: "1px solid #e1e3e5",
+                                  position: "relative"
+                                }}>
+                                  <input 
+                                      type="color" 
+                                      value={configOptions.button.textColor}
+                                      onChange={(e) => setConfigOptions((prev: any) => ({...prev, button: {...prev.button, textColor: e.target.value}}))}
+                                      style={{
+                                          width: "150%", 
+                                          height: "150%", 
+                                          position: "absolute", 
+                                          top: "-25%", 
+                                          left: "-25%", 
+                                          cursor: "pointer", 
+                                          border: "none"
+                                      }}
+                                  />
+                              </div>
+                              <Text variant="bodyMd" tone="subdued" as="span">{configOptions.button.textColor.toUpperCase()}</Text>
+                          </div>
+                      </BlockStack>
+                      
+                      {/* Background Color */}
+                      <BlockStack gap="200">
+                          <Text variant="bodySm" as="p" fontWeight="bold">Background Color</Text>
+                          <div style={{display: "flex", alignItems: "center", gap: "12px"}}>
+                                <div style={{
+                                   width: "42px", 
+                                   height: "42px", 
+                                   borderRadius: "50%", 
+                                   overflow: "hidden", 
+                                   border: "1px solid #e1e3e5",
+                                   position: "relative"
+                                 }}>
+                                   <input 
+                                       type="color" 
+                                       value={configOptions.display.backgroundColor}
+                                       onChange={(e) => setConfigOptions((prev: any) => ({...prev, display: {...prev.display, backgroundColor: e.target.value}}))}
+                                       style={{
+                                           width: "150%", 
+                                           height: "150%", 
+                                           position: "absolute", 
+                                           top: "-25%", 
+                                           left: "-25%", 
+                                           cursor: "pointer", 
+                                           border: "none"
+                                       }}
+                                   />
+                               </div>
+                               <Text variant="bodyMd" tone="subdued" as="span">{configOptions.display.backgroundColor.toUpperCase()}</Text>
+                          </div>
+                      </BlockStack>
+                  </InlineStack>
+                  
+                  <Divider />
+
+                  <InlineStack align="end">
+                      <Button variant="primary" onClick={handleSaveDashboardConfig} loading={loading}>Save Changes</Button>
+                  </InlineStack>
+              </BlockStack>
             </BlockStack>
           </Card>
         </Layout.Section>

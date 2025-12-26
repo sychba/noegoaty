@@ -1,67 +1,117 @@
 {% if request.page_type == 'product' and product %}
 
-{% assign theme_style = block.settings.color_scheme | default: 'dark' %}
-{% assign is_glassy = block.settings.enable_glassy | default: true %}
-{% assign app_url = shop.metafields.stickyadd.app_url %}
+{% assign app_config = shop.metafields.stickyadd.config.value %}
+{% if app_config.enabled %}
 
 {% comment %}
-  Colors based on scheme
+  Dynamic Styles from App Config
 {% endcomment %}
-{% if theme_style == 'dark' %}
-  {% assign bg_color = '#000000' %}
-  {% assign text_color = '#ffffff' %}
-  {% assign bg_opacity = '0.85' %}
-  {% assign border_color = 'rgba(255,255,255,0.1)' %}
-{% else %}
-  {% assign bg_color = '#ffffff' %}
-  {% assign text_color = '#000000' %}
-  {% assign bg_opacity = '0.85' %}
-  {% assign border_color = 'rgba(0,0,0,0.1)' %}
-{% endif %}
+{% assign bg_color = app_config.display.backgroundColor | default: '#000000' %}
+{% assign text_color = app_config.display.textColor | default: '#ffffff' %}
+{% assign btn_bg = app_config.button.color | default: '#2563eb' %}
+{% assign btn_text = app_config.button.textColor | default: '#ffffff' %}
+{% assign position = app_config.settings.position | default: 'bottom' %}
+{% assign layout = app_config.settings.layout | default: 'docked' %}
+{% assign rounded = app_config.display.rounded | default: 'pill' %}
+{% assign is_glassy = app_config.display.glassy | default: false %}
 
 <style>
   :root {
     --sticky-bar-bg: {{ bg_color }};
     --sticky-bar-text: {{ text_color }};
-    --sticky-bar-btn-bg: #2563eb; /* Bright Blue */
-    --sticky-bar-btn-text: #ffffff;
-    --sticky-bar-border: {{ border_color }};
+    --sticky-bar-btn-bg: {{ btn_bg }};
+    --sticky-bar-btn-text: {{ btn_text }};
+    --sticky-bar-border: rgba(255,255,255,0.1);
   }
 
   .sticky-cart-wrapper {
     position: fixed;
-    bottom: 20px;
     left: 50%;
-    transform: translateX(-50%) translateY(200%);
     z-index: 9999;
     width: auto;
-    max-width: 95%;
     transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     pointer-events: none;
+    
+    /* Position Logic */
+    {% if position == 'top' %}
+      top: 20px;
+      bottom: auto;
+      transform: translateX(-50%) translateY(-200%);
+    {% else %}
+      top: auto;
+      bottom: 20px;
+      transform: translateX(-50%) translateY(200%);
+    {% endif %}
+
+    /* Layout Logic */
+    {% if layout == 'floating' %}
+      max-width: 95%;
+      width: fit-content;
+      left: 50%;
+    {% else %}
+      max-width: 100%;
+      width: 100%;
+      left: 0;
+      /* If docked, we reset the translate X/Y slightly different or keep it simple */
+      transform: translateY(200%); /* Full width doesn't need X center if left:0 */
+    {% endif %}
   }
 
-  .sticky-cart-wrapper.is-visible {
-    transform: translateX(-50%) translateY(0);
-    pointer-events: auto;
-  }
+  /* Docked overrides for position */
+  {% if layout == 'docked' %}
+    .sticky-cart-wrapper {
+       left: 0;
+       right: 0;
+       {% if position == 'top' %}
+         top: 0;
+         transform: translateY(-100%);
+       {% else %}
+         bottom: 0;
+         transform: translateY(100%);
+       {% endif %}
+    }
+    .sticky-cart-wrapper.is-visible {
+      transform: translateY(0) !important;
+    }
+    .sticky-cart-bar {
+      border-radius: 0 !important;
+      border: none !important;
+      justify-content: space-between;
+    }
+  {% else %}
+    /* Floating Logic */
+    .sticky-cart-wrapper.is-visible {
+      transform: translateX(-50%) translateY(0) !important;
+    }
+  {% endif %}
 
   .sticky-cart-bar {
     display: flex;
     align-items: center;
     gap: 24px;
-    padding: 12px;
+    padding: 12px 24px;
     background-color: var(--sticky-bar-bg);
     color: var(--sticky-bar-text);
-    border-radius: 9999px; /* Pill shape */
-    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.15);
     border: 1px solid var(--sticky-bar-border);
+    
+    /* Border Radius Logic */
+    {% if rounded == 'pill' %}
+      border-radius: 9999px;
+    {% elsif rounded == 'rounded' %}
+      border-radius: 12px;
+    {% else %}
+      border-radius: 0px;
+    {% endif %}
   }
 
   {% if is_glassy %}
   .sticky-cart-bar {
-    background-color: rgba({{ bg_color | color_to_rgb | remove: 'rgb(' | remove: ')' }}, {{ bg_opacity }});
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    /* Convert hex to rgba manually or rely on CSS opacity if supported, 
+       but for liquid we can do a trick or just use opacity on bg */
+    background-color: {{ bg_color | color_to_rgb | replace: 'rgb', 'rgba' | replace: ')', ', 0.7)' }}; 
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
   {% endif %}
 
@@ -78,7 +128,7 @@
     border-radius: 8px;
     object-fit: cover;
     background: #fff;
-    padding: 2px; /* Optional: mimics the white border look if needed */
+    padding: 2px;
   }
 
   .sticky-details {
@@ -140,7 +190,7 @@
     color: var(--sticky-bar-btn-text);
     border: none;
     padding: 10px 24px;
-    border-radius: 9999px;
+    border-radius: 4px;
     font-weight: 600;
     font-size: 14px;
     cursor: pointer;
@@ -158,28 +208,35 @@
     cursor: not-allowed;
   }
 
-  /* Variant Select (Hidden but functional or minimal) */
+  /* Variant Select */
   .sticky-variant-select {
     max-width: 100px;
     background: transparent;
     color: inherit;
-    border: 1px solid var(--sticky-bar-border);
+    border: 1px solid rgba(255,255,255,0.2);
     border-radius: 4px;
     padding: 2px;
     font-size: 11px;
     margin-top: 2px;
   }
-
+  
+  /* Mobile Responsiveness */
   @media (max-width: 768px) {
     .sticky-cart-bar {
       padding: 10px;
       gap: 12px;
-      width: 90vw;
       justify-content: space-between;
     }
+    /* Mobile Layout adjustments */
+    {% if layout == 'docked' %}
+        .sticky-cart-bar { width: 100vw; }
+    {% else %}
+        .sticky-cart-wrapper { width: 92%; max-width: 92%; }
+    {% endif %}
+    
     .sticky-title { max-width: 120px; font-size: 13px; }
     .sticky-img { width: 40px; height: 40px; }
-    .sticky-qty { display: none; } /* Hide qty on mobile to fit */
+    .sticky-qty { display: none; } 
     .sticky-add-btn { padding: 8px 16px; font-size: 13px; }
   }
 </style>
@@ -189,15 +246,20 @@
     
     <!-- Left: Image & Info -->
     <div class="sticky-product-info">
-      {% if product.featured_image %}
+      {% if app_config.product.showImage and product.featured_image %}
         <img src="{{ product.featured_image | image_url: width: 100 }}" alt="{{ product.title }}" class="sticky-img" width="48" height="48">
       {% endif %}
       
       <div class="sticky-details">
-        <span class="sticky-title">{{ product.title }}</span>
-        <span class="sticky-price">{{ product.selected_or_first_available_variant.price | money }}</span>
+        {% if app_config.product.showTitle %}
+            <span class="sticky-title">{{ product.title }}</span>
+        {% endif %}
         
-        {% unless product.has_only_default_variant %}
+        {% if app_config.product.showPrice %}
+            <span class="sticky-price">{{ product.selected_or_first_available_variant.price | money }}</span>
+        {% endif %}
+        
+        {% if app_config.controls.showVariantSelector and product.has_only_default_variant == false %}
           <select id="sticky-variant-select" class="sticky-variant-select">
             {% for variant in product.variants %}
               <option value="{{ variant.id }}" {% if variant == product.selected_or_first_available_variant %}selected{% endif %}>
@@ -205,17 +267,19 @@
               </option>
             {% endfor %}
           </select>
-        {% endunless %}
+        {% endif %}
       </div>
     </div>
 
     <!-- Right: Qty & Button -->
     <div class="sticky-controls">
+      {% if app_config.controls.showQuantitySelector %}
       <div class="sticky-qty">
         <button type="button" class="sticky-qty-btn minus" aria-label="Decrease">－</button>
         <span class="sticky-qty-val">1</span>
         <button type="button" class="sticky-qty-btn plus" aria-label="Increase">＋</button>
       </div>
+      {% endif %}
 
       <form method="post" action="/cart/add" id="sticky-atc-form" style="margin:0;">
         <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
@@ -224,7 +288,7 @@
         
         <button type="submit" class="sticky-add-btn" {% unless product.available %}disabled{% endunless %}>
           {% if product.available %}
-            Add to cart
+            {{ app_config.button.text | default: 'Add to cart' }}
           {% else %}
             Sold Out
           {% endif %}
@@ -240,18 +304,24 @@ document.addEventListener('DOMContentLoaded', () => {
   const wrapper = document.getElementById('sticky-cart-wrapper');
   const form = document.getElementById('sticky-atc-form');
   const variantSelect = document.getElementById('sticky-variant-select');
+  const priceDisplay = wrapper.querySelector('.sticky-price');
   const qtyVal = wrapper.querySelector('.sticky-qty-val');
   const qtyInput = document.getElementById('sticky-form-qty');
   const idInput = form.querySelector('input[name="id"]');
-     ({% for variant in product.variants %}
-        {
-          id: {{ variant.id }},
-          price: "{{ variant.price | money }}",
-          available: {{ variant.available }}
-        },
-      {% endfor %}
-    ];
+  const btn = form.querySelector('.sticky-add-btn');
+  
+  // Variants Data
+  const variants = [
+    {% for variant in product.variants %}
+      {
+        id: {{ variant.id }},
+        price: "{{ variant.price | money }}",
+        available: {{ variant.available }}
+      },
+    {% endfor %}
+  ];
 
+  if (variantSelect) {
     variantSelect.addEventListener('change', (e) => {
       const id = parseInt(e.target.value);
       idInput.value = id;
@@ -259,11 +329,11 @@ document.addEventListener('DOMContentLoaded', () => {
       // Update Price
       const selected = variants.find(v => v.id === id);
       if (selected) {
-        priceDisplay.textContent = selected.price;
-        const btn = form.querySelector('button');
+        if (priceDisplay) priceDisplay.textContent = selected.price;
+        
         if (selected.available) {
           btn.disabled = false;
-          btn.textContent = 'Add to cart';
+          btn.textContent = "{{ app_config.button.text | default: 'Add to cart' }}";
         } else {
           btn.disabled = true;
           btn.textContent = 'Sold Out';
@@ -271,11 +341,32 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+  
+  // Qty Logic
+  const minusBtn = wrapper.querySelector('.minus');
+  const plusBtn = wrapper.querySelector('.plus');
+  
+  if (minusBtn && plusBtn) {
+    minusBtn.addEventListener('click', () => {
+      let val = parseInt(qtyVal.textContent);
+      if (val > 1) {
+        val--;
+        qtyVal.textContent = val;
+        qtyInput.value = val;
+      }
+    });
+    
+    plusBtn.addEventListener('click', () => {
+        let val = parseInt(qtyVal.textContent);
+        val++;
+        qtyVal.textContent = val;
+        qtyInput.value = val;
+    });
+  }
 
   // AJAX Add to Cart
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const btn = form.querySelector('button');
     const originalText = btn.textContent;
     btn.textContent = 'Adding...';
     btn.disabled = true;
@@ -289,9 +380,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       if (res.ok) {
         btn.textContent = 'Added!';
-        // Refresh cart bubble/drawer if theme supports it
         document.documentElement.dispatchEvent(new CustomEvent('cart:refresh', { bubbles: true })); 
-        // Some themes use different events, try standard ones
         setTimeout(() => {
             btn.textContent = originalText;
             btn.disabled = false;
@@ -306,35 +395,53 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error(err);
       btn.textContent = 'Error';
       setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
-    }t();
-    sendEven'click'
+    }
   });
+
+  // --- VISIBILITY LOGIC ---
+  const showTrigger = "{{ app_config.settings.openTrigger | default: 'standard' }}";
+  const mainAtc = document.querySelector('form[action*="/cart/add"] button[type="submit"]');
+
+  if (showTrigger === 'early') {
+     wrapper.classList.add('is-visible');
+     wrapper.setAttribute('aria-hidden', 'false');
+  } else if (mainAtc) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            // If main button is NOT visible (scrolled past), show sticky bar
+            if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
+                wrapper.classList.add('is-visible');
+                wrapper.setAttribute('aria-hidden', 'false');
+            } else {
+                wrapper.classList.remove('is-visible');
+                wrapper.setAttribute('aria-hidden', 'true');
+            }
+        });
+      }, { threshold: 0 });
+      
+      observer.observe(mainAtc);
+  } else {
+      // Fallback: Show after scroll 300px
+      window.addEventListener('scroll', () => {
+          if (window.scrollY > 300) {
+            wrapper.classList.add('is-visible');
+            wrapper.setAttribute('aria-hidden', 'false');
+          } else {
+            wrapper.classList.remove('is-visible');
+            wrapper.setAttribute('aria-hidden', 'true');
+          }
+      });
+  }
 });
 </script>
 
+{% endif %}
 {% endif %}
 
 {% schema %}
 {
   "name": "Sticky Bar (Design)",
   "target": "body",
-  "settings": [
-    {
-      "type": "select",
-      "id": "color_scheme",
-      "label": "Color Scheme",
-      "options": [
-        { "value": "dark", "label": "Dark" },
-        { "value": "light", "label": "Light" }
-      ],
-      "default": "dark"
-    },
-    {
-      "type": "checkbox",
-      "id": "enable_glassy",
-      "label": "Enable Glassy Effect",
-      "default": true
-    }
-  ]
+  "settings": []
 }
 {% endschema %}
